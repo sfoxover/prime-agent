@@ -337,7 +337,17 @@ async function shutdownStaleDaemonIfNotBusy(socketPath: string): Promise<boolean
 	return shutdownDaemonAndWait(socketPath);
 }
 
-async function ensureDaemonRunning(socketPath: string, spawnCwd?: string): Promise<void> {
+export interface DaemonLaunchTarget {
+	executablePath: string;
+	args?: readonly string[];
+	env?: NodeJS.ProcessEnv;
+}
+
+async function ensureDaemonRunning(
+	socketPath: string,
+	spawnCwd?: string,
+	launchTarget?: DaemonLaunchTarget,
+): Promise<void> {
 	const probe = await probeDaemonVersion(socketPath);
 	if (probe.status === "current") {
 		return;
@@ -348,16 +358,18 @@ async function ensureDaemonRunning(socketPath: string, spawnCwd?: string): Promi
 	}
 
 	const entrypoint = process.argv[1];
-	if (!entrypoint) {
+	if (!launchTarget && !entrypoint) {
 		throw new Error("Cannot determine current CLI entrypoint for daemon launch");
 	}
+	const executablePath = launchTarget?.executablePath ?? process.execPath;
+	const launchArgs = launchTarget?.args ?? (entrypoint ? [...process.execArgv, entrypoint] : []);
 
 	// Strip inherited daemon worker/supervisor role env vars so the spawned
 	// daemon supervisor does not inherit worker-mode behavior. Without this,
 	// a CLI running inside a daemon worker (e.g. a test spawned by the Prime
 	// Agent daemon) would launch the supervisor in worker mode, which listens
 	// on the socket but never sends the daemon_hello handshake.
-	const env = createCliSubprocessEnv();
+	const env = { ...createCliSubprocessEnv(), ...launchTarget?.env };
 	delete env[DAEMON_WORKER_ROLE_ENV];
 	delete env[DAEMON_WORKER_TOKEN_ENV];
 	delete env[DAEMON_WORKER_ACTIVE_SESSION_ID_ENV];
@@ -368,19 +380,15 @@ async function ensureDaemonRunning(socketPath: string, spawnCwd?: string): Promi
 	delete env[SESSION_LEASE_OWNER_ID_ENV];
 
 	const logOffset = currentDaemonLogSize(socketPath);
-	const child = spawn(
-		process.execPath,
-		[...process.execArgv, entrypoint, "--mode", "daemon", "--daemon-socket", socketPath],
-		{
-			cwd: spawnCwd ?? process.cwd(),
-			detached: true,
-			env,
-			// A pipe would tie the daemon's stderr to this short-lived CLI
-			// (EPIPE once it exits); crash details come from the daemon log,
-			// which the supervisor writes to before rethrowing startup errors.
-			stdio: "ignore",
-		},
-	);
+	const child = spawn(executablePath, [...launchArgs, "--mode", "daemon", "--daemon-socket", socketPath], {
+		cwd: spawnCwd ?? process.cwd(),
+		detached: true,
+		env,
+		// A pipe would tie the daemon's stderr to this short-lived CLI
+		// (EPIPE once it exits); crash details come from the daemon log,
+		// which the supervisor writes to before rethrowing startup errors.
+		stdio: "ignore",
+	});
 	let childFailure:
 		| { type: "error"; error: Error }
 		| { type: "exit"; code: number | null; signal: NodeJS.Signals | null }
@@ -463,10 +471,14 @@ const ensurePromises = new Map<string, Promise<void>>();
  * main.ts share one probe/spawn; failed attempts are forgotten so a later call
  * retries (and surfaces the real error at its await site).
  */
-export function ensureInteractiveDaemonRunning(socketPath: string, spawnCwd?: string): Promise<void> {
+export function ensureInteractiveDaemonRunning(
+	socketPath: string,
+	spawnCwd?: string,
+	launchTarget?: DaemonLaunchTarget,
+): Promise<void> {
 	let promise = ensurePromises.get(socketPath);
 	if (!promise) {
-		promise = ensureDaemonRunning(socketPath, spawnCwd);
+		promise = ensureDaemonRunning(socketPath, spawnCwd, launchTarget);
 		ensurePromises.set(socketPath, promise);
 		const clear = () => {
 			if (ensurePromises.get(socketPath) === promise) {

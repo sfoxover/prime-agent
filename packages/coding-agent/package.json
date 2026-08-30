@@ -20,6 +20,10 @@
 		"./hooks": {
 			"types": "./dist/core/hooks/index.d.ts",
 			"import": "./dist/core/hooks/index.js"
+		},
+		"./desktop": {
+			"types": "./dist/desktop.d.ts",
+			"import": "./dist/desktop.js"
 		}
 	},
 	"files": [

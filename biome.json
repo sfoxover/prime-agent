@@ -32,6 +32,8 @@
 	"files": {
 		"includes": [
 			"packages/*/src/**/*.ts",
+			"packages/*/src/**/*.tsx",
+			"packages/desktop/*.ts",
 			"packages/*/test/**/*.ts",
 			"packages/coding-agent/examples/**/*.ts",
 			"!**/node_modules/**/*",

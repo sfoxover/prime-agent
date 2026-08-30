@@ -1,0 +1,1 @@
+- Added desktop access to persisted default model settings.
