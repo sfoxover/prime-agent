@@ -1,0 +1,42 @@
+{
+	"name": "@earendil-works/pi-desktop",
+	"version": "0.8.1",
+	"private": true,
+	"description": "Desktop client for Prime Agent",
+	"author": "Mario Zechner",
+	"type": "module",
+	"main": "./out/main/index.js",
+	"scripts": {
+		"clean": "shx rm -rf out",
+		"predev": "npm --prefix ../.. run build",
+		"dev": "electron-vite dev",
+		"prebuild": "npm --prefix ../.. run build",
+		"build": "npm run typecheck && electron-vite build",
+		"package": "npm run build && electron-builder --dir --publish never",
+		"dist": "npm run build && electron-builder --publish never",
+		"typecheck": "tsgo --noEmit -p tsconfig.node.json && tsgo --noEmit -p tsconfig.renderer.json",
+		"preview": "electron-vite preview"
+	},
+	"dependencies": {
+		"@earendil-works/pi-coding-agent": "^0.8.1",
+		"marked": "^18.0.7",
+		"react": "^19.1.1",
+		"react-dom": "^19.1.1"
+	},
+	"devDependencies": {
+		"@tailwindcss/vite": "^4.1.12",
+		"@types/react": "^19.1.10",
+		"@types/react-dom": "^19.1.7",
+		"@vitejs/plugin-react": "^5.0.2",
+		"electron": "43.4.1",
+		"electron-builder": "26.15.3",
+		"electron-vite": "^5.0.0",
+		"shx": "^0.4.0",
+		"tailwindcss": "^4.1.12",
+		"typescript": "^7.0.2",
+		"vite": "^7.1.3"
+	},
+	"engines": {
+		"node": ">=22.12.0"
+	}
+}

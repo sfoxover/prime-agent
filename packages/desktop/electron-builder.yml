@@ -1,0 +1,57 @@
+appId: ai.primeintellect.prime-agent
+productName: Prime Agent
+asar: true
+
+directories:
+  output: dist
+
+files:
+  - out/**/*
+  - package.json
+
+extraResources:
+  - from: ../coding-agent/dist/bundle
+    to: prime-agent
+    filter:
+      - "**/*"
+  - from: ../coding-agent/package.json
+    to: prime-agent/package.json
+  - from: ../coding-agent/dist/prime-agent-runtime
+    to: prime-agent/dist/prime-agent-runtime
+    filter:
+      - "**/*"
+  - from: ../coding-agent/dist/skills
+    to: prime-agent/dist/skills
+    filter:
+      - "**/*"
+  - from: ../coding-agent/dist/modes/interactive/theme
+    to: prime-agent/dist/modes/interactive/theme
+    filter:
+      - "**/*"
+  - from: ../coding-agent/dist/modes/interactive/assets
+    to: prime-agent/dist/modes/interactive/assets
+    filter:
+      - "**/*"
+  - from: ../coding-agent/dist/core/export-html
+    to: prime-agent/dist/core/export-html
+    filter:
+      - "**/*"
+
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - dmg
+    - zip
+
+win:
+  target:
+    - nsis
+
+linux:
+  category: Development
+  executableName: prime-agent
+  target:
+    - AppImage
+    - deb

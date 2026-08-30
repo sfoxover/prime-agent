@@ -1,0 +1,1 @@
+- Added a desktop integration entry point and explicit daemon launch targets for embedded clients.

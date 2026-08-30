@@ -1,0 +1,6 @@
+- Fixed desktop packaging by pinning the Electron runtime version required by electron-builder.
+- Fixed packaged desktop startup by including the complete Prime Agent daemon bundle.
+- Changed the Linux desktop executable name to `prime-agent`.
+- Fixed startup and new-session headers to display the configured default model.
+- Fixed intentional session deletion from showing a daemon connection error.
+- Fixed Python tools and bundled daemon assets in packaged desktop applications.
