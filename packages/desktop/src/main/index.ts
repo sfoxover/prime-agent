@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { app, BrowserWindow, type IpcMainInvokeEvent, ipcMain, protocol, shell } from "electron";
 import type { DesktopPromptAttachment, DesktopProviderAuthType } from "../shared/desktop-api.js";
 import { DESKTOP_CHANNELS } from "../shared/desktop-api.js";
@@ -38,6 +38,8 @@ function requireTrustedSender(event: IpcMainInvokeEvent): void {
 	}
 	const expectedUrl = process.env.ELECTRON_RENDERER_URL;
 	if (!expectedUrl) {
+		const previewUrl = pathToFileURL(join(currentDirectory, "../renderer/index.html")).toString();
+		if (rendererUrl === previewUrl) return;
 		throw new Error("IPC request came from an unexpected origin");
 	}
 	try {

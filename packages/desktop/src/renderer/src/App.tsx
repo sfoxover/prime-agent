@@ -804,7 +804,7 @@ export function App() {
 							</button>
 						</div>
 					) : null}
-					{attachingSessionId === selectedSessionId && !selectedSnapshot ? (
+					{attachingSessionId && attachingSessionId === selectedSessionId && !selectedSnapshot ? (
 						<div className="chat-loading" role="status">
 							Opening session…
 						</div>
