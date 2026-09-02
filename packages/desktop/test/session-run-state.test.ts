@@ -21,4 +21,8 @@ describe("isDesktopSessionRunning", () => {
 	it("returns to Send after an error", () => {
 		expect(isDesktopSessionRunning({ runState: "error" }, { messages: [{ status: "error" }] })).toBe(false);
 	});
+
+	it("does not let a stale streaming message override a session error", () => {
+		expect(isDesktopSessionRunning({ runState: "error" }, { messages: [{ status: "streaming" }] })).toBe(false);
+	});
 });

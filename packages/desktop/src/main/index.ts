@@ -5,6 +5,7 @@ import { app, BrowserWindow, type IpcMainInvokeEvent, ipcMain, protocol, shell }
 import type { DesktopPromptAttachment, DesktopProviderAuthType } from "../shared/desktop-api.js";
 import { DESKTOP_CHANNELS } from "../shared/desktop-api.js";
 import { DesktopSessionService } from "./desktop-session-service.js";
+import { isSafeExternalUrl } from "./external-url.js";
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 let sessionService: DesktopSessionService | undefined;
@@ -290,7 +291,10 @@ function createWindow(): BrowserWindow {
 		},
 	});
 
-	window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+	window.webContents.setWindowOpenHandler(({ url }) => {
+		if (isSafeExternalUrl(url)) void shell.openExternal(url);
+		return { action: "deny" };
+	});
 	window.webContents.on("will-attach-webview", (event) => event.preventDefault());
 	window.webContents.on("will-navigate", (event) => event.preventDefault());
 	window.webContents.session.setPermissionCheckHandler(() => false);

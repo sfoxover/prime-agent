@@ -1,0 +1,2 @@
+- Changed the desktop workspace to use streamlined session, model, composer, and attachment controls.
+- Fixed desktop model login, external links, cancellation state, session loading, and responsive layout behavior.

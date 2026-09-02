@@ -8,6 +8,7 @@ export function isDesktopSessionRunning(
 	summary: Pick<DesktopSessionSummary, "runState"> | undefined,
 	snapshot: SessionRunSnapshot | undefined,
 ): boolean {
+	if (summary?.runState === "error") return false;
 	return (
 		summary?.runState === "running" ||
 		summary?.runState === "aborting" ||

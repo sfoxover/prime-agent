@@ -3,7 +3,6 @@ import {
 	type DragEvent,
 	type FormEvent,
 	type KeyboardEvent,
-	type MouseEvent as ReactMouseEvent,
 	type ReactNode,
 	type SVGProps,
 	useEffect,
@@ -116,13 +115,11 @@ function getInitialTheme(): Theme {
 }
 
 const MAX_IMAGE_ATTACHMENT_BYTES = 8 * 1024 * 1024;
-const MAX_VIDEO_PREVIEW_BYTES = 25 * 1024 * 1024;
 const MAX_VISIBLE_MODELS = 250;
 const SUPPORTED_IMAGE_TYPES = new Set(["image/gif", "image/jpeg", "image/png", "image/webp"]);
 
 interface LocalAttachment extends DesktopPromptAttachment {
 	id: string;
-	mediaType: "image" | "video";
 	previewUrl: string;
 }
 
@@ -173,7 +170,6 @@ function readFile(file: File): Promise<LocalAttachment> {
 				name: file.name,
 				mimeType: file.type,
 				data: reader.result.slice(separator + 1),
-				mediaType: file.type.startsWith("video/") ? "video" : "image",
 				previewUrl: reader.result,
 			});
 		};
@@ -224,7 +220,6 @@ export function App() {
 
 	const [theme, setTheme] = useState<Theme>(getInitialTheme);
 	const [prompt, setPrompt] = useState("");
-	const [showRawOutput, setShowRawOutput] = useState(false);
 	const [sessionSearch, setSessionSearch] = useState("");
 	const [sessions, setSessions] = useState<DesktopSessionSummary[]>([]);
 	const [snapshots, setSnapshots] = useState<Record<string, DesktopSessionSnapshot>>({});
@@ -237,6 +232,7 @@ export function App() {
 	const [isModelChanging, setIsModelChanging] = useState(false);
 	const [modelCatalog, setModelCatalog] = useState<DesktopModelCatalog>();
 	const [defaultModelLabel, setDefaultModelLabel] = useState<string>();
+	const [defaultCwdLabel, setDefaultCwdLabel] = useState("prime-agent");
 	const [modelSearch, setModelSearch] = useState("");
 	const [selectedProviderId, setSelectedProviderId] = useState<string>();
 	const [authProvider, setAuthProvider] = useState<DesktopProviderOption>();
@@ -244,6 +240,8 @@ export function App() {
 	const [authInput, setAuthInput] = useState("");
 	const [apiKey, setApiKey] = useState("");
 	const [pendingModel, setPendingModel] = useState<DesktopModelOption>();
+	const [modelSessionId, setModelSessionId] = useState<string>();
+	const [attachingSessionId, setAttachingSessionId] = useState<string>();
 	const [sessionContextMenu, setSessionContextMenu] = useState<SessionContextMenu>();
 	const [sessionAction, setSessionAction] = useState<SessionAction>();
 	const [sessionActionPending, setSessionActionPending] = useState(false);
@@ -253,6 +251,7 @@ export function App() {
 	const promptInputRef = useRef<HTMLTextAreaElement>(null);
 	const renameInputRef = useRef<HTMLInputElement>(null);
 	const sessionSearchInputRef = useRef<HTMLInputElement>(null);
+	const shouldAutoScrollRef = useRef(true);
 
 	const selectedSnapshot = selectedSessionId ? snapshots[selectedSessionId] : undefined;
 	const selectedSummary = sessions.find((session) => session.id === selectedSessionId);
@@ -282,7 +281,45 @@ export function App() {
 	}, [sessionAction]);
 
 	useEffect(() => {
-		if (!selectedSessionId || !selectedSnapshot) return;
+		function handleGlobalKeyDown(event: globalThis.KeyboardEvent) {
+			if (event.key === "Escape") {
+				setSessionContextMenu(undefined);
+				if (!sessionActionPending) setSessionAction(undefined);
+				if (isModelSelectorOpen) {
+					if (authProvider && isAuthFlowActive(authFlow))
+						void window.primeDesktop?.cancelProviderLogin(authProvider.id);
+					setIsModelSelectorOpen(false);
+					setAuthProvider(undefined);
+					setAuthFlow(undefined);
+					setPendingModel(undefined);
+					setModelSessionId(undefined);
+					setApiKey("");
+					setAuthInput("");
+				}
+				return;
+			}
+			if (!(event.metaKey || event.ctrlKey) || event.altKey || isModelSelectorOpen || sessionAction) return;
+			if (event.key.toLocaleLowerCase() === "n") {
+				event.preventDefault();
+				setSelectedSessionId(undefined);
+				shouldAutoScrollRef.current = true;
+				setPrompt("");
+				setAttachments([]);
+				setError(undefined);
+				setSessionContextMenu(undefined);
+				requestAnimationFrame(() => promptInputRef.current?.focus());
+			} else if (event.key.toLocaleLowerCase() === "k") {
+				event.preventDefault();
+				setSessionContextMenu(undefined);
+				requestAnimationFrame(() => sessionSearchInputRef.current?.focus());
+			}
+		}
+		window.addEventListener("keydown", handleGlobalKeyDown);
+		return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+	}, [authFlow, authProvider, isModelSelectorOpen, sessionAction, sessionActionPending]);
+
+	useEffect(() => {
+		if (!selectedSessionId || !selectedSnapshot || !shouldAutoScrollRef.current) return;
 		const frame = requestAnimationFrame(() => {
 			const canvas = chatCanvasRef.current;
 			if (canvas) canvas.scrollTo({ top: canvas.scrollHeight, behavior: "auto" });
@@ -346,6 +383,7 @@ export function App() {
 			.then((bootstrap) => {
 				setSessions(bootstrap.sessions);
 				setDefaultModelLabel(bootstrap.defaultModelLabel);
+				setDefaultCwdLabel(bootstrap.defaultCwdLabel);
 				setIsLoading(false);
 			})
 			.catch((bootstrapError: unknown) => {
@@ -383,18 +421,23 @@ export function App() {
 	async function selectSession(sessionId: string) {
 		setSessionContextMenu(undefined);
 		setSelectedSessionId(sessionId);
+		shouldAutoScrollRef.current = true;
 		if (snapshots[sessionId]) return;
 		setError(undefined);
+		setAttachingSessionId(sessionId);
 		try {
 			const snapshot = await api.attachSession(sessionId);
 			setSnapshots((current) => ({ ...current, [sessionId]: snapshot }));
 		} catch (attachError) {
 			setError(attachError instanceof Error ? attachError.message : "Could not open the session");
+		} finally {
+			setAttachingSessionId((current) => (current === sessionId ? undefined : current));
 		}
 	}
 
 	function startNewSession() {
 		setSelectedSessionId(undefined);
+		shouldAutoScrollRef.current = true;
 		setPrompt("");
 		setAttachments([]);
 		setError(undefined);
@@ -402,17 +445,11 @@ export function App() {
 		requestAnimationFrame(() => promptInputRef.current?.focus());
 	}
 
-	function focusSessionBrowser() {
-		setSessionContextMenu(undefined);
-		requestAnimationFrame(() => sessionSearchInputRef.current?.focus());
-	}
-
-	function openSessionContextMenu(event: ReactMouseEvent<HTMLButtonElement>, session: DesktopSessionSummary) {
-		event.preventDefault();
+	function openSessionContextMenu(session: DesktopSessionSummary, x: number, y: number) {
 		setSessionContextMenu({
 			session,
-			x: Math.max(8, Math.min(event.clientX, window.innerWidth - 196)),
-			y: Math.max(8, Math.min(event.clientY, window.innerHeight - 152)),
+			x: Math.max(8, Math.min(x, window.innerWidth - 196)),
+			y: Math.max(8, Math.min(y, window.innerHeight - 152)),
 		});
 	}
 
@@ -473,6 +510,7 @@ export function App() {
 				setIsModelSelectorOpen(false);
 				return;
 			}
+			setModelSessionId(snapshot.id);
 			const catalog = await api.getModelCatalog(snapshot.id);
 			setModelCatalog(catalog);
 			const currentProvider = (snapshot.modelLabel ?? defaultModelLabel)?.split("/", 1)[0];
@@ -495,17 +533,18 @@ export function App() {
 		setAuthProvider(undefined);
 		setAuthFlow(undefined);
 		setPendingModel(undefined);
+		setModelSessionId(undefined);
 		setApiKey("");
 		setAuthInput("");
 	}
 
 	async function applyModel(model: DesktopModelOption) {
-		if (!selectedSessionId) return;
+		if (!modelSessionId) return;
 		setIsModelChanging(true);
 		setError(undefined);
 		try {
 			const snapshot = await api.setModel({
-				sessionId: selectedSessionId,
+				sessionId: modelSessionId,
 				provider: model.provider,
 				modelId: model.id,
 			});
@@ -534,12 +573,12 @@ export function App() {
 	}
 
 	async function loginProvider(authType: Exclude<DesktopProviderAuthType, "external">, key?: string) {
-		if (!selectedSessionId || !authProvider) return;
+		if (!modelSessionId || !authProvider) return;
 		setError(undefined);
 		setAuthFlow({ providerId: authProvider.id, status: "progress", message: "Starting sign-in…" });
 		try {
 			const catalog = await api.loginProvider({
-				sessionId: selectedSessionId,
+				sessionId: modelSessionId,
 				providerId: authProvider.id,
 				authType,
 				...(key ? { apiKey: key } : {}),
@@ -561,28 +600,35 @@ export function App() {
 		}
 	}
 
+	async function submitAuthValue(value: string) {
+		if (!authProvider) return;
+		setError(undefined);
+		setAuthFlow({ providerId: authProvider.id, status: "progress", message: "Continuing sign-in…" });
+		try {
+			await api.submitAuthInput({ providerId: authProvider.id, value });
+			setAuthInput("");
+		} catch (inputError) {
+			setError(inputError instanceof Error ? inputError.message : "Could not submit authentication input");
+			setAuthFlow({
+				providerId: authProvider.id,
+				status: "error",
+				message: inputError instanceof Error ? inputError.message : "Could not continue sign-in",
+			});
+		}
+	}
+
 	async function submitAuthPrompt(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
 		if (!authProvider || authFlow?.status !== "input_required") return;
 		if (!authFlow.allowEmpty && !authInput.trim()) return;
-		try {
-			await api.submitAuthInput({ providerId: authProvider.id, value: authInput });
-			setAuthInput("");
-			setAuthFlow({ providerId: authProvider.id, status: "progress", message: "Continuing sign-in…" });
-		} catch (inputError) {
-			setError(inputError instanceof Error ? inputError.message : "Could not submit authentication input");
-		}
+		await submitAuthValue(authInput);
 	}
 
 	async function addFiles(files: File[]) {
-		const mediaFiles = files.filter((file) => SUPPORTED_IMAGE_TYPES.has(file.type) || file.type.startsWith("video/"));
-		const accepted = mediaFiles.filter((file) =>
-			file.type.startsWith("video/")
-				? file.size <= MAX_VIDEO_PREVIEW_BYTES
-				: file.size <= MAX_IMAGE_ATTACHMENT_BYTES,
-		);
-		if (accepted.length !== mediaFiles.length)
-			setError("Images must be 8 MB or smaller; video previews must be 25 MB or smaller");
+		if (isRunning) return;
+		const imageFiles = files.filter((file) => SUPPORTED_IMAGE_TYPES.has(file.type));
+		const accepted = imageFiles.filter((file) => file.size <= MAX_IMAGE_ATTACHMENT_BYTES);
+		if (accepted.length !== files.length) setError("Attach up to 8 PNG, JPEG, GIF, or WebP images of 8 MB or less");
 		if (accepted.length === 0) return;
 		try {
 			const next = await Promise.all(accepted.slice(0, 8 - attachments.length).map(readFile));
@@ -603,7 +649,7 @@ export function App() {
 	}
 
 	function handlePromptKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-		if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+		if (isRunning || event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
 		event.preventDefault();
 		event.currentTarget.form?.requestSubmit();
 	}
@@ -612,7 +658,8 @@ export function App() {
 		if (!selectedSessionId) return;
 		setError(undefined);
 		try {
-			await api.abort(selectedSessionId);
+			const result = await api.abort(selectedSessionId);
+			if (!result.accepted) setError("The current query could not be stopped");
 		} catch (abortError) {
 			setError(abortError instanceof Error ? abortError.message : "Could not stop the query");
 		}
@@ -620,14 +667,13 @@ export function App() {
 
 	async function handleSubmit(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
-		if (!prompt.trim() && attachments.filter((attachment) => attachment.mediaType === "image").length === 0) return;
+		if (isRunning || (!prompt.trim() && attachments.length === 0)) return;
 		const snapshot = selectedSnapshot ?? (await createSession());
 		if (!snapshot) return;
 		const text = prompt;
 		const submittedAttachments = attachments;
-		const images = attachments
-			.filter((attachment) => attachment.mediaType === "image")
-			.map(({ name, mimeType, data }) => ({ name, mimeType, data }));
+		const images = attachments.map(({ name, mimeType, data }) => ({ name, mimeType, data }));
+		shouldAutoScrollRef.current = true;
 		setPrompt("");
 		setAttachments([]);
 		try {
@@ -646,51 +692,6 @@ export function App() {
 
 	return (
 		<div className="app-shell">
-			<nav aria-label="Primary" className="activity-rail">
-				<button aria-label="Home" className="brand-mark" onClick={startNewSession} title="Home" type="button">
-					<span className="brand-core" />
-				</button>
-				<button
-					aria-label="New session"
-					className="rail-button rail-button-primary"
-					onClick={startNewSession}
-					type="button"
-				>
-					<Icon name="plus" />
-				</button>
-				<button
-					aria-label="Sessions"
-					aria-current="page"
-					className="rail-button is-active"
-					onClick={focusSessionBrowser}
-					type="button"
-				>
-					<Icon name="chat" />
-				</button>
-				<button
-					aria-label="Agents (not available yet)"
-					className="rail-button"
-					disabled
-					title="Agents view is not available yet"
-					type="button"
-				>
-					<Icon name="agent" />
-				</button>
-				<div className="rail-spacer" />
-				<button
-					aria-label="Settings (not available yet)"
-					className="rail-button"
-					disabled
-					title="Settings are not available yet"
-					type="button"
-				>
-					<Icon name="settings" />
-				</button>
-				<div className="profile-avatar" title={`Prime Agent on ${api.platform}`}>
-					PA
-				</div>
-			</nav>
-
 			<aside className="session-sidebar">
 				<header className="sidebar-header">
 					<div>
@@ -729,46 +730,54 @@ export function App() {
 						<p className="session-placeholder">No matching sessions</p>
 					) : null}
 					{visibleSessions.map((session) => (
-						<button
-							aria-current={session.id === selectedSessionId ? "page" : undefined}
+						<div
 							className={`session-row${session.id === selectedSessionId ? " is-active" : ""}`}
 							key={session.id}
-							onClick={() => void selectSession(session.id)}
-							onContextMenu={(event) => openSessionContextMenu(event, session)}
-							type="button"
 						>
-							<span className="session-title">
-								<span className={`run-indicator ${session.runState}`} />
-								{session.title}
-							</span>
-							<span className="session-detail">{session.cwdLabel}</span>
-						</button>
+							<button
+								aria-current={session.id === selectedSessionId ? "page" : undefined}
+								className="session-select-button"
+								onClick={() => void selectSession(session.id)}
+								onContextMenu={(event) => {
+									event.preventDefault();
+									openSessionContextMenu(session, event.clientX, event.clientY);
+								}}
+								type="button"
+							>
+								<span className="session-title">
+									<span className={`run-indicator ${session.runState}`} />
+									{session.title}
+								</span>
+								<span className="session-detail">{session.cwdLabel}</span>
+							</button>
+							<button
+								aria-label={`More actions for ${session.title}`}
+								className="session-more-button"
+								onClick={(event) => {
+									const bounds = event.currentTarget.getBoundingClientRect();
+									openSessionContextMenu(session, bounds.right, bounds.bottom + 4);
+								}}
+								type="button"
+							>
+								•••
+							</button>
+						</div>
 					))}
 				</div>
-				<footer className="daemon-status">
-					<span className="status-dot" />
-					<div>
-						<strong>Prime Agent daemon</strong>
-						<span>Persistent sessions enabled</span>
-					</div>
-				</footer>
 			</aside>
 
 			<main className="chat-workspace">
 				<header className="chat-header">
 					<div>
 						<h2>{selectedSummary?.title ?? "New session"}</h2>
-						<span className="workspace-path">{selectedSummary?.cwdLabel ?? "prime-agent"}</span>
+						<span className="workspace-path">{selectedSummary?.cwdLabel ?? defaultCwdLabel}</span>
 					</div>
 					<div className="header-actions">
-						{isRunning ? (
-							<button className="stop-button" onClick={() => void stopSelectedSession()} type="button">
-								Stop
-							</button>
-						) : null}
 						<button
 							aria-expanded={isModelSelectorOpen}
 							className="model-button"
+							disabled={isRunning}
+							title={isRunning ? "Stop the current query before changing models" : "Change model"}
 							onClick={() => void openModelSelector()}
 							type="button"
 						>
@@ -779,7 +788,14 @@ export function App() {
 					</div>
 				</header>
 
-				<section className="chat-canvas" ref={chatCanvasRef}>
+				<section
+					className="chat-canvas"
+					onScroll={(event) => {
+						const canvas = event.currentTarget;
+						shouldAutoScrollRef.current = canvas.scrollHeight - canvas.scrollTop - canvas.clientHeight < 120;
+					}}
+					ref={chatCanvasRef}
+				>
 					{error ? (
 						<div className="error-banner" role="alert">
 							{error}
@@ -788,7 +804,11 @@ export function App() {
 							</button>
 						</div>
 					) : null}
-					{selectedSnapshot && selectedSnapshot.messages.length > 0 ? (
+					{attachingSessionId === selectedSessionId && !selectedSnapshot ? (
+						<div className="chat-loading" role="status">
+							Opening session…
+						</div>
+					) : selectedSnapshot && selectedSnapshot.messages.length > 0 ? (
 						<div className="transcript">
 							{selectedSnapshot.messages.map((message) => (
 								<article className={`message message-${message.role}`} key={message.id}>
@@ -801,7 +821,7 @@ export function App() {
 									</div>
 									<div className="message-body">
 										{message.blocks.map((block) => {
-											if (block.type === "text" && message.role === "assistant" && !showRawOutput)
+											if (block.type === "text" && message.role === "assistant")
 												return <MarkdownContent key={block.id} text={block.text} />;
 											if (block.type === "text")
 												return (
@@ -859,7 +879,10 @@ export function App() {
 									<button
 										className="suggestion-card"
 										key={suggestion.title}
-										onClick={() => setPrompt(suggestion.detail)}
+										onClick={() => {
+											setPrompt(suggestion.detail);
+											requestAnimationFrame(() => promptInputRef.current?.focus());
+										}}
 										type="button"
 									>
 										<Icon name={suggestion.icon} />
@@ -885,17 +908,11 @@ export function App() {
 						<div className="attachment-strip">
 							{attachments.map((attachment) => (
 								<div className="attachment-preview" key={attachment.id}>
-									{attachment.mediaType === "video" ? (
-										<video muted src={attachment.previewUrl} />
-									) : (
-										<img alt="" src={attachment.previewUrl} />
-									)}
-									<span>
-										{attachment.name}
-										{attachment.mediaType === "video" ? " · preview only" : ""}
-									</span>
+									<img alt="" src={attachment.previewUrl} />
+									<span>{attachment.name}</span>
 									<button
 										aria-label={`Remove ${attachment.name}`}
+										disabled={isRunning}
 										onClick={() =>
 											setAttachments((current) =>
 												current.filter((candidate) => candidate.id !== attachment.id),
@@ -913,11 +930,14 @@ export function App() {
 						Message Prime Agent
 					</label>
 					<textarea
+						disabled={isRunning}
 						id="prompt"
 						onChange={(event) => setPrompt(event.target.value)}
 						onKeyDown={handlePromptKeyDown}
 						onPaste={handlePaste}
-						placeholder="Ask Prime Agent to build, investigate, or fix something…"
+						placeholder={
+							isRunning ? "Prime Agent is working…" : "Ask Prime Agent to build, investigate, or fix something…"
+						}
 						ref={promptInputRef}
 						rows={3}
 						value={prompt}
@@ -925,7 +945,7 @@ export function App() {
 					<div className="composer-toolbar">
 						<div className="composer-actions">
 							<input
-								accept="image/*,video/*"
+								accept="image/gif,image/jpeg,image/png,image/webp"
 								className="sr-only"
 								multiple
 								onChange={(event) => {
@@ -936,26 +956,17 @@ export function App() {
 								type="file"
 							/>
 							<button
-								aria-label="Attach an image or video"
+								aria-label="Attach images"
 								className="icon-button"
+								disabled={isRunning}
 								onClick={() => fileInputRef.current?.click()}
 								type="button"
 							>
 								<Icon name="attach" />
 							</button>
-							<span className="context-button" title="Current workspace">
-								<Icon name="code" /> prime-agent
+							<span className="context-label" title="Current workspace">
+								<Icon name="code" /> {selectedSummary?.cwdLabel ?? defaultCwdLabel}
 							</span>
-							<button
-								aria-label="View raw assistant output"
-								aria-pressed={showRawOutput}
-								className="raw-output-toggle"
-								onClick={() => setShowRawOutput((current) => !current)}
-								title="Toggle raw assistant output"
-								type="button"
-							>
-								Raw
-							</button>
 						</div>
 						{isRunning ? (
 							<button
@@ -970,7 +981,7 @@ export function App() {
 							<button
 								aria-label="Send prompt"
 								className="send-button"
-								disabled={!prompt.trim() && attachments.every((attachment) => attachment.mediaType !== "image")}
+								disabled={!prompt.trim() && attachments.length === 0}
 								type="submit"
 							>
 								<Icon name="send" />
@@ -1140,9 +1151,7 @@ export function App() {
 												{authFlow.options.map((option) => (
 													<button
 														key={option.id}
-														onClick={() =>
-															void api.submitAuthInput({ providerId: authProvider.id, value: option.id })
-														}
+														onClick={() => void submitAuthValue(option.id)}
 														type="button"
 													>
 														{option.label}
